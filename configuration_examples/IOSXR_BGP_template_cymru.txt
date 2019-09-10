@@ -1,0 +1,199 @@
+router bgp <your asn>
+address-family ipv4 unicast
+!
+neighbor x.x.x.x
+! TTL security check, as above and:
+! http://www.cisco.com/web/about/security/intelligence/CiscoIOSXR.html#72
+! Note that in IOS XR TTL security can be enabled for directly-connected
+! peering sessions only, not multihop sessions.
+ttl-security
+remote-as 65333
+ebgp-multihop 255
+description <your description>
+update-source Loopback999
+password clear <your password>
+address-family ipv4 unicast
+maximum-prefix 100 90
+route-policy drop in
+route-policy CYMRUBOGONS out
+soft-reconfiguration inbound always
+!
+!
+!
+route-policy drop
+ drop
+end-policy
+!
+route-policy CYMRUBOGONS
+if (community matches-every BOGONS) then
+ set next-hop 192.0.2.1
+else
+ drop
+endif
+end-policy
+!
+community-set BOGONS
+ 65333:888
+end-set
+!
+router static
+ address-family ipv4 unicast
+ 192.0.2.1/32 Null0
+!
+!
+! Define prefix-sets and access-lists that will be used later in the template
+prefix-set pfx_announce_permit
+! The announce prefix list prevents us from announcing anything beyond
+! our aggregated netblock(s).
+ 192.0.2.0/24
+end-set
+!
+! Team Cymru has removed all static bogon references from this template
+! due to the high probability that the application of these bogon filters
+! will be a one-time event. Unfortunately many of these templates are
+! applied and never re-visited, despite our dire warnings that bogons do
+! change.
+!
+! This doesn't mean bogon filtering can't be accomplished in an automated
+! manner. Why not consider peering with our globally distributed bogon
+! route-server project? Alternately you can obtain a current and well
+! maintained bogon feed from our DNS and RADb services. Read more at the
+! link below to learn how!
+!
+!   https://www.team-cymru.org/bogon-reference.html
+!
+prefix-set pfx_bogons_permit
+! Allow all prefixes up to /27. Your mileage may vary,
+! so adjust this to fit your specific requirements.
+ 0.0.0.0/0 le 27
+end-set
+!
+! Protect TCP port 179 (BGP port) from miscreants by limiting
+! access. Allow peers to connect and log all other attempts.
+! Remember to apply this ACL to the interfaces of the router or
+! add it to existing ACLs.
+! Please note that ACL 185 would block ALL traffic as written. This
+! is designed to focus only on protecting BGP. You MUST modify ACL
+! 185 to fit your environment and approved traffic patterns.
+ipv4 access-list acl_185
+ 10 permit tcp host 10.10.5.1 host 10.10.5.2 eq 179
+ 20 permit tcp host 10.10.5.1 eq bgp host 10.10.5.2
+ 30 permit tcp host 10.10.10.1 host 10.10.10.2 eq 179
+ 40 permit tcp host 10.10.10.1 eq bgp host 10.10.10.2
+ 50 permit tcp host 172.17.70.2 host 172.17.70.1 eq 179
+ 60 permit tcp host 172.17.70.2 eq bgp host 172.17.70.1
+ 70 deny tcp any any eq 179 log-input
+!
+! Define route-policies to be used by BGP peers
+route-policy announce
+ if (destination in pfx_announce_permit) then
+ pass
+ endif
+end-policy
+!
+!
+router static
+! Now add our null route and the loopback/iBGP route. Remember to add
+! more specific non-null routes so that the packets travel to their
+! intended destination!
+!
+address-family ipv4 unicast
+ 192.0.2.0/24 Null0
+ 192.0.2.0/25 192.168.50.5
+ 192.0.2.128/25 192.168.50.8
+ 172.17.70.2/32 192.168.50.2
+!
+!
+! Now configure BGP peers etc.
+! Our ASN is 64496
+router bgp 64496
+!
+! Set BGP router-id
+bgp router-id 192.168.1.65
+!
+! Be a little more forgiving of an occasional missed keepalive.
+bgp fast-external-fallover disable
+!
+! Track and punt, via syslog, all interesting observations about our neighbors.
+bgp log neighbor changes
+!
+! IOS-XR has a different feature to accomplish the same limit as
+! the 'bgp maxas-limit 10' statement.  You can replace the number
+! 10 with any AS hop count you find suitable.
+route-policy Drop_Long_AS-Path
+  if as-path length ge 10 then
+    drop
+  endif
+end-policy
+!
+! Announce our netblock(s) in a manner that does not increase CPU
+! utilization. Redistributing from an IGP is dangerous as it increases
+! the likelihood of flapping and instability. Redistributing static is
+! more stable, but requires the CPU to peruse the routing table at a set
+! interval to capture any changes. The network statement, combined with
+! a null route, is the least expensive (in terms of CPU utilization) and
+! most reliable (in terms of stability) option.
+address-family ipv4 unicast
+network 192.0.2.0/24
+!
+! If we have multiple links on the same router to the same AS, we like to
+! put them to good use. Load balance, per destination, with maximum- paths.
+! The limit is eight. For our example, we will assume two equal size pipes
+! to the same AS. maximum-paths ebgp 2
+!
+! This is our iBGP peer, 172.17.70.2.
+neighbor 172.17.70.2
+remote-as 64496
+! Again, a handy description.
+description iBGP with our other router
+password bgpwith64496
+! Use the loopback interface for iBGP announcements. This increases the
+! stability of iBGP.
+update-source Loopback0
+address-family ipv4 unicast
+soft-reconfiguration inbound
+next-hop-self
+maximum-prefix 250000
+!
+!
+! Our first neighbor, 10.10.5.1, is an eBGP peer with the ASN of 64511.
+neighbor 10.10.5.1
+remote-as 64511
+! Type in a description for future reference. Not everyone memorizes
+! ASNs. :-)
+description eBGP with ISP64511
+! Set up a password for authentication.
+password bgpwith64511
+address-family ipv4 unicast
+! Set for soft reconfiguration, thus preventing a complete withdrawal
+! of all announced prefixes when clear ip bgp x.x.x.x is typed.
+soft-reconfiguration inbound
+! Prevent a mistake or mishap by our peer (or someone with whom our peer
+! has a peering agreement) from causing router meltdown by filling the
+! routing and BGP tables. This is a hard limit. At 75% of this limit,
+! the IOS XR will issue log messages warning that the neighbor is approaching
+! the limit. All log messages should be sent to a remote syslog host.
+! The warning water mark can be modified by placing a value after the
+! maximum prefix value, e.g. maximum-prefix 250000 50. This will set the
+! IOS XR to issue warning messages when the neighbor reaches 50% of
+! the limit.
+! Note that this number may need to be adjusted upward in the
+! future to account for growth in the Internet routing table.
+maximum-prefix 250000
+! Announce only those networks we specifically list. This also prevents
+! the network from becoming a transit provider. An added bit of protection
+! and good netizenship. See the announce prefix-list below.
+route-policy announce out
+!
+!
+! Our next neighbor is 10.10.10.1, an eBGP peer with the ASN of 64500.
+neighbor 10.10.10.1
+remote-as 64500
+description eBGP with ISP64500
+password bgpwith64500
+address-family ipv4 unicast
+soft-reconfiguration inbound
+maximum-prefix 250000
+route-policy announce out
+!
+! END

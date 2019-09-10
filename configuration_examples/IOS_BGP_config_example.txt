@@ -1,0 +1,19 @@
+# This example was provided here page 47 : https://archive.apnic.net/meetings/22/docs/tut-routing-pres-bgp-bcp.pdf
+router bgp 65534
+network 202.52.0.0 mask 255.255.224.0
+neighbor 198.32.231.201 remote-as 201
+neighbor 198.32.231.201 prefix-list in-filter in
+!
+ip prefix-list in-filter deny 0.0.0.0/0				! Block default
+ip prefix-list in-filter deny 0.0.0.0/8 le 32
+ip prefix-list in-filter deny 10.0.0.0/8 le 32
+ip prefix-list in-filter deny 100.64.0.0/10 le 32
+ip prefix-list in-filter deny 127.0.0.0/8 le 32
+ip prefix-list in-filter deny 169.254.0.0/16 le 32
+ip prefix-list in-filter deny 172.16.0.0/12 le 32
+ip prefix-list in-filter deny 192.0.2.0/24 le 32
+ip prefix-list in-filter deny 192.168.0.0/16 le 32
+ip prefix-list in-filter deny 202.52.0.0/19 le 32	! Block local prefix
+ip prefix-list in-filter deny 224.0.0.0/3 le 32
+ip prefix-list in-filter deny 0.0.0.0/0 ge 25		! Block prefixes >/24
+ip prefix-list in-filter permit 0.0.0.0/0 le 32
