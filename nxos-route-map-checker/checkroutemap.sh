@@ -13,7 +13,7 @@ spines=('spine1.example.com' 'spine2.example.com')
 user='localuser'
 
 # BEGIN #
-echo 'Each dot is a "proper" route-map/prefix-list association'
+echo 'Each dot is a "proper" neighbor'
 echo 'If you only have dots, you are fine'
 for i in "${spines[@]}"
 do
@@ -35,7 +35,7 @@ do
       then
         echo -n "."
       else
-        echo -e "\nOn $i, for the $f neighbor, the route-map is $routemap and the associated prefix-list ($prefixlist) IS EMPTY/UNSET, meaning that the route-map is basically an ALLOW ANY"
+        echo -e "\nOn $i, for the $f neighbor, the route-map is $routemap and the associated prefix-list is $prefixlist. However it IS EMPTY/UNSET, meaning that the route-map is basically an ALLOW ANY"
       fi
     fi
   done
